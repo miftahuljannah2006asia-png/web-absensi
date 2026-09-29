@@ -1,0 +1,6 @@
+{
+  "name": "Presensi Kelas Real-Time",
+  "description": "Sistem presensi kelas QR Code otomatis terhubung ke Google Sheets dan Database SQL dengan sinkronisasi real-time responsif.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

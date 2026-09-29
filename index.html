@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Presensi Kelas Real-Time</title>
+    <meta name="description" content="Sistem presensi kelas QR Code otomatis terhubung ke Google Sheets dan Database SQL dengan sinkronisasi real-time responsif." />
+    <meta property="og:title" content="Presensi Kelas Real-Time" />
+    <meta property="og:description" content="Sistem presensi kelas QR Code otomatis terhubung ke Google Sheets dan Database SQL dengan sinkronisasi real-time responsif." />
+    <meta property="og:type" content="website" />
+    
+    <!-- Icons & Fonts -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" />
+    
+    <!-- Stylesheet Terpisah Bebas Konflik (Gunakan path relatif ./style.css agar berfungsi di GitHub Pages) -->
+    <link rel="stylesheet" href="./style.css" />
+    
+    <!-- Libraries (QR Scanner, Fallback File Reader, Local QR Generator, & Zip Exporter untuk VS Code) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  </head>
+  <body>
+    <div class="app-container">
+      
+      <!-- ============================================================
+           1. HEADER & STATUS BAR
+           ============================================================ -->
+      <header class="app-header">
+        <div class="header-brand">
+          <div class="brand-icon">
+            <i class="fas fa-qrcode"></i>
+          </div>
+          <div>
+            <h1 class="brand-title">Presensi Kelas Real-Time</h1>
+            <div class="brand-subtitle">
+              <span><i class="fas fa-book-open"></i> Rekayasa Perangkat Lunak</span>
+              <span>&bull;</span>
+              <span id="liveClock">Memuat waktu...</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <!-- Connection Status Pill (Klik untuk cek status dan panduan) -->
+          <div class="connection-pill warning" id="connectionPill" onclick="openSettingsModal()" title="Klik untuk menghubungkan ke Google Sheets Anda" style="cursor: pointer;">
+            <span class="status-dot"></span>
+            <span id="connectionLabel">⚠️ Hubungkan Google Sheet Anda</span>
+          </div>
+
+          <!-- Quick Action Buttons -->
+          <button class="btn btn-outline btn-sm" onclick="openNewTab()" title="Buka website di Tab Baru browser agar akses kamera lancar">
+            <i class="fas fa-arrow-up-right-from-square"></i> Tab Baru
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="openDiagnosticModal()" title="Cek Status Kamera, Database, dan Solusi Masalah">
+            <i class="fas fa-stethoscope"></i> Diagnostik & Solusi
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="syncWithServer(true)" title="Sinkronkan dengan Google Sheets & Database">
+            <i class="fas fa-rotate"></i> Sinkron
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="openManualModal()" title="Input Presensi Manual">
+            <i class="fas fa-pen-to-square"></i> Input Manual
+          </button>
+          <button class="btn btn-primary btn-sm" onclick="openSettingsModal()" title="Konfigurasi URL Google Apps Script">
+            <i class="fas fa-table-cells"></i> Hubungkan Sheet
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="openCodeExportModal()" title="Lihat & Ambil Kode untuk VS Code">
+            <i class="fas fa-code"></i> Ambil Kode VS Code
+          </button>
+        </div>
+      </header>
+
+      <!-- Banner Status Koneksi Google Sheets jika belum terhubung -->
+      <div id="sheetNotConnectedBanner" class="alert-box alert-warning" style="margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <i class="fas fa-triangle-exclamation" style="font-size: 20px; color: #d97706;"></i>
+          <div>
+            <strong>Presensi belum masuk ke Google Spreadsheet pribadi Anda?</strong>
+            <div style="font-size: 12px; color: #92400e;">
+              Website memerlukan URL Web App dari Google Sheets Anda agar setiap presensi otomatis tercatat ke baris spreadsheet.
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="openSettingsModal()">
+          <i class="fas fa-plug"></i> Buka Panduan & Hubungkan Sekarang
+        </button>
+      </div>
+
+      <!-- Global Alert / Status Feedback -->
+      <div id="globalAlert" class="alert-box alert-info" style="display: none;">
+        <i class="fas fa-info-circle"></i> <span>Aplikasi presensi siap digunakan.</span>
+      </div>
+
+      <!-- ============================================================
+           2. RINGKASAN STATISTIK KEHADIRAN (STAT CARDS)
+           ============================================================ -->
+      <section class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-icon total">
+            <i class="fas fa-users"></i>
+          </div>
+          <div class="stat-info">
+            <span class="stat-value" id="statTotal">0</span>
+            <span class="stat-label">Total Mahasiswa</span>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-icon present">
+            <i class="fas fa-user-check"></i>
+          </div>
+          <div class="stat-info">
+            <span class="stat-value" id="statPresent" style="color: var(--success);">0</span>
+            <span class="stat-label">Sudah Hadir</span>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-icon absent">
+            <i class="fas fa-user-xmark"></i>
+          </div>
+          <div class="stat-info">
+            <span class="stat-value" id="statAbsent" style="color: var(--warning);">0</span>
+            <span class="stat-label">Belum Hadir</span>
+          </div>
+        </div>
+
+        <div class="stat-card">
+          <div class="stat-icon rate">
+            <i class="fas fa-chart-pie"></i>
+          </div>
+          <div class="stat-info">
+            <span class="stat-value" id="statRate" style="color: var(--primary);">0%</span>
+            <span class="stat-label">Persentase Hadir</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================================
+           3. MAIN TWO-COLUMN LAYOUT
+           ============================================================ -->
+      <main class="main-layout">
+        
+        <!-- KOLOM KIRI: SCANNER KAMERA & GENERATOR QR CODE -->
+        <div class="left-stack">
+          
+          <!-- Card Scanner Kamera -->
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">
+                <i class="fas fa-camera"></i> Pemindai QR Kamera
+              </span>
+              <span style="font-size: 11px; color: var(--text-muted);">
+                <i class="fas fa-shield-halved"></i> Auto-Detect
+              </span>
+            </div>
+            <div class="card-body">
+              <div class="scanner-viewport" id="scannerViewport">
+                <div id="qr-reader"></div>
+                
+                <div class="scanner-placeholder-text" id="scannerPlaceholder">
+                  <i class="fas fa-camera" style="font-size: 36px; opacity: 0.7; color: var(--primary-light);"></i>
+                  <p>Kamera dalam keadaan mati.<br>Klik tombol di bawah untuk mengaktifkan pemindaian.</p>
+                </div>
+
+                <div class="scanner-overlay" id="scannerOverlay" style="display: none;">
+                  <div class="scan-crosshair">
+                    <div class="scan-laser"></div>
+                  </div>
+                  <div class="scanner-guide-tip">
+                    <i class="fas fa-arrows-to-dot" style="color: #2dd4bf;"></i>
+                    <span>Jarak ideal 15-25 cm &bull; Pastikan 4 sudut QR terlihat utuh</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Scanner Action Controls -->
+              <div class="scanner-controls">
+                <button class="btn btn-primary" id="btnStartScan" style="flex: 1;" onclick="toggleScanner()">
+                  <i class="fas fa-camera"></i> Mulai Scan Kamera
+                </button>
+                <button class="btn btn-outline btn-icon" onclick="switchCamera()" title="Alihkan Kamera Depan / Belakang">
+                  <i class="fas fa-arrows-rotate"></i>
+                </button>
+                <button class="btn btn-outline btn-icon" onclick="toggleTorch()" title="Lampu Flash">
+                  <i class="fas fa-bolt"></i>
+                </button>
+              </div>
+
+              <!-- Fallback & Testing Controls (Jika Kamera Bermasalah) -->
+              <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
+                <button class="btn btn-outline btn-sm" style="flex: 1; min-width: 120px;" onclick="document.getElementById('fileQrInput').click()" title="Gunakan foto QR jika kamera tidak dapat diakses">
+                  <i class="fas fa-file-image"></i> Scan Foto/File
+                </button>
+                <input type="file" id="fileQrInput" accept="image/*" style="display: none;" onchange="handleFileQrUpload(event)" />
+                <button class="btn btn-outline btn-sm" style="flex: 1; min-width: 120px;" onclick="openManualModal()" title="Ketik NIM langsung tanpa perlu scan kamera">
+                  <i class="fas fa-keyboard"></i> Input Manual
+                </button>
+                <button class="btn btn-outline btn-sm" style="flex: 1; min-width: 120px;" onclick="simulateQuickScan()" title="Uji alur presensi secara langsung tanpa kamera">
+                  <i class="fas fa-play"></i> Uji Coba Presensi
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card QR Code Tools (QR Kelas & Generator Mahasiswa) -->
+          <div class="card">
+            <div class="tab-nav">
+              <button class="tab-btn active" data-tab="classQR">
+                <i class="fas fa-chalkboard-user"></i> QR Presensi Kelas
+              </button>
+              <button class="tab-btn" data-tab="studentQR">
+                <i class="fas fa-id-card"></i> Buat QR Mahasiswa
+              </button>
+            </div>
+
+            <!-- Tab 1: QR Kelas Global -->
+            <div class="card-body tab-pane active" id="tabPane-classQR">
+              <div class="qr-box">
+                <img id="classQrImage" class="qr-image" src="" alt="QR Code Presensi Kelas" />
+                <div class="qr-caption">
+                  Tampilkan di layar proyektor. Mahasiswa dapat memindai QR ini atau menggunakan QR identitas masing-masing.
+                </div>
+                <div style="display: flex; gap: 8px;">
+                  <button class="btn btn-outline btn-sm" onclick="downloadClassQR()">
+                    <i class="fas fa-download"></i> Unduh Gambar QR
+                  </button>
+                  <button class="btn btn-outline btn-sm" onclick="generateClassQR()">
+                    <i class="fas fa-arrows-rotate"></i> Refresh QR
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 2: Generator QR Mahasiswa Per NIM -->
+            <div class="card-body tab-pane" id="tabPane-studentQR">
+              <div class="form-group" style="margin-bottom: 12px;">
+                <label class="form-label" for="studentNimInput">Pilih / Ketik NIM Mahasiswa:</label>
+                <div style="display: flex; gap: 8px;">
+                  <input type="text" id="studentNimInput" class="form-control" placeholder="Contoh: 2024001" maxlength="15" />
+                  <button class="btn btn-primary" onclick="generateStudentQR()">
+                    <i class="fas fa-wand-magic-sparkles"></i> Generate
+                  </button>
+                </div>
+              </div>
+
+              <div class="qr-box" id="studentQrPreview" style="display: none; margin-top: 10px;">
+                <img id="studentQrImage" class="qr-image" src="" alt="QR Mahasiswa" />
+                <div id="studentQrDetails" style="font-size: 13px; font-weight: 500;"></div>
+                <button class="btn btn-outline btn-sm" onclick="downloadStudentQR()">
+                  <i class="fas fa-download"></i> Unduh Kartu QR
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- KOLOM KANAN: TABEL PRESENSI REAL-TIME MAHASISWA -->
+        <div class="card">
+          <div class="card-header" style="flex-wrap: wrap; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <span class="card-title">
+                <i class="fas fa-list-check"></i> Daftar Kehadiran Mahasiswa
+              </span>
+              <span class="badge badge-outline" id="studentCountBadge" style="font-size: 11px; font-weight: 600; background: rgba(15, 118, 110, 0.08); color: var(--primary); border: 1px solid var(--primary); padding: 3px 10px; border-radius: 12px;">
+                <i class="fas fa-users"></i> <strong id="headerStudentCount">98</strong> Mahasiswa
+              </span>
+            </div>
+            
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+              <button class="btn btn-sm btn-outline" style="color: #e11d48; border-color: #fecdd3;" onclick="openResetAttendanceModal()" title="Kosongkan seluruh status presensi agar kembali ke Belum Hadir">
+                <i class="fas fa-trash-can"></i> Reset Kehadiran
+              </button>
+              <button class="btn btn-sm btn-outline" onclick="forceResetTo98Students()" title="Muat ulang seluruh 98 data mahasiswa Teknik Informatika">
+                <i class="fas fa-arrows-rotate"></i> Muat Ulang 98 Data
+              </button>
+              <button class="btn btn-sm btn-outline" onclick="uploadAllStudentsToGAS()" title="Kirim seluruh 98 mahasiswa ke tab 'Mahasiswa' di Google Spreadsheet Anda secara otomatis">
+                <i class="fas fa-cloud-arrow-up"></i> Isi ke Google Sheets
+              </button>
+            </div>
+          </div>
+          
+          <div class="card-body">
+            <!-- Toolbar: Pencarian & Filter Status -->
+            <div class="table-toolbar">
+              <div class="search-input-wrapper">
+                <i class="fas fa-magnifying-glass search-icon"></i>
+                <input type="text" id="tableSearchInput" class="search-input" placeholder="Cari nama, NIM, atau kelas..." />
+              </div>
+
+              <div class="filter-chips">
+                <button class="chip-btn active" data-filter="all">Semua</button>
+                <button class="chip-btn" data-filter="present">Hadir</button>
+                <button class="chip-btn" data-filter="pending">Belum Hadir</button>
+              </div>
+            </div>
+
+            <!-- Tabel Data -->
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>NIM</th>
+                    <th>Nama Mahasiswa</th>
+                    <th>Kelas</th>
+                    <th>Jurusan</th>
+                    <th>Status</th>
+                    <th>Waktu Hadir</th>
+                    <th>Aksi</th>
+                  </tr>
+                </thead>
+                <tbody id="tableBody">
+                  <!-- Baris data di-render secara dinamis oleh script.js -->
+                </tbody>
+              </table>
+
+              <div id="emptyState" style="display: none; text-align: center; padding: 36px 16px; color: var(--text-muted);">
+                <i class="fas fa-folder-open" style="font-size: 32px; opacity: 0.5; margin-bottom: 8px;"></i>
+                <p>Tidak ada data mahasiswa yang sesuai dengan pencarian Anda.</p>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </main>
+
+      <!-- ============================================================
+           4. FOOTER INFORMASI INTEGRASI
+           ============================================================ -->
+      <footer class="app-footer">
+        <p>
+          <i class="fas fa-database" style="color: var(--primary);"></i> 
+          Terhubung ke Google Sheets & Database SQL (Google Apps Script API) &bull; Mode Aman & Responsif
+        </p>
+        <p>
+          Dapat diedit di <strong>Visual Studio Code (VS Code)</strong> murni menggunakan HTML, CSS, dan JavaScript tanpa Node.js.
+        </p>
+      </footer>
+
+    </div>
+
+    <!-- ============================================================
+         MODAL 1: PENGATURAN API GOOGLE APPS SCRIPT
+         ============================================================ -->
+    <div class="modal-overlay" id="modalSettings">
+      <div class="modal-container" style="max-width: 640px;">
+        <div class="modal-header">
+          <h3 class="modal-title">
+            <i class="fas fa-table-cells" style="color: var(--primary);"></i> Hubungkan Google Spreadsheet Anda
+          </h3>
+          <button class="btn-close" onclick="closeModal('modalSettings')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <!-- Status Banner di dalam Modal -->
+          <div id="settingsConnectionBadge" class="alert-box alert-warning" style="margin-bottom: 16px;">
+            <i class="fas fa-circle-exclamation"></i>
+            <div>
+              <strong id="settingsStatusTitle">Status: Belum Terhubung ke Sheet Anda</strong>
+              <div id="settingsStatusDesc" style="font-size: 12px; margin-top: 2px;">
+                Website saat ini masih memakai URL demo. Agar data presensi masuk ke Google Drive Anda, ikuti panduan 4 langkah di bawah ini.
+              </div>
+            </div>
+          </div>
+
+          <!-- PANDUAN CEPAT 4 LANGKAH -->
+          <div style="background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 14px; margin-bottom: 16px;">
+            <div style="font-weight: 700; font-size: 13px; margin-bottom: 8px; color: var(--text-main); display: flex; align-items: center; justify-content: space-between;">
+              <span><i class="fas fa-list-ol" style="color: var(--primary);"></i> 4 Langkah Mudah Pasang Google Sheet:</span>
+              <a href="https://sheets.new" target="_blank" class="btn btn-sm btn-outline" style="font-size: 11px; padding: 3px 8px;">
+                <i class="fas fa-arrow-up-right-from-square"></i> Buka sheets.new
+              </a>
+            </div>
+            <ol style="margin-left: 18px; font-size: 12px; line-height: 1.6; color: var(--text-muted);">
+              <li>Buka file Google Sheets baru di <a href="https://sheets.new" target="_blank" style="color: var(--primary); font-weight: 600;">sheets.new</a>, beri nama file <em>"Presensi Kelas"</em>.</li>
+              <li>Klik menu <strong>Ekstensi (Extensions) > Apps Script</strong>. Hapus isi kode bawaan, lalu klik tombol di bawah untuk menyalin kode script backend.</li>
+              <li>Klik tombol biru <strong>Deploy (Terapkan) > New deployment (Penerapan baru)</strong>:
+                <ul style="margin-left: 16px; margin-top: 4px; list-style-type: circle;">
+                  <li>Pilih jenis (Select type): <strong>Web app</strong></li>
+                  <li><strong>Execute as</strong>: <code>Me (email saya)</code></li>
+                  <li><strong>Who has access</strong>: <strong style="color: #dc2626;">Anyone (Siapa saja)</strong> &mdash; <em>Wajib pilih Anyone agar Google tidak memblokir browser!</em></li>
+                </ul>
+              </li>
+              <li>Klik <strong>Deploy</strong> > <strong>Authorize access</strong> (Pilih Akun Google Anda > Advanced > Go to Untitled > Allow) > <strong>Salin URL Web App yang berakhiran <code>/exec</code></strong>.</li>
+            </ol>
+
+            <div style="margin-top: 10px; display: flex; gap: 8px;">
+              <button class="btn btn-sm btn-primary" onclick="copyGasScriptCode()">
+                <i class="fas fa-copy"></i> 1. Salin Kode google-apps-script.js
+              </button>
+            </div>
+          </div>
+
+          <!-- INPUT URL WEB APP -->
+          <div class="form-group">
+            <label class="form-label" for="settingsGasUrl" style="font-weight: 600;">
+              2. Tempel URL Web App Google Apps Script Anda:
+            </label>
+            <input type="text" id="settingsGasUrl" class="form-control" placeholder="https://script.google.com/macros/s/AKfycb.../exec" />
+            <div class="form-help">
+              Pastikan berakhiran <code>/exec</code> (bukan <code>/edit</code> atau <code>/view</code>).
+            </div>
+          </div>
+
+          <!-- AKSI PENGUJIAN & FITUR LANGSUNG -->
+          <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px;">
+            <button class="btn btn-sm btn-outline" id="btnTestConnection" onclick="testConnectionFromSettings()">
+              <i class="fas fa-plug"></i> Tes Koneksi
+            </button>
+            <button class="btn btn-sm btn-outline" id="btnTestRow" onclick="sendTestRowToGAS()" title="Kirim 1 baris kehadiran contoh ke spreadsheet untuk memastikan langsung masuk">
+              <i class="fas fa-paper-plane"></i> 🧪 Tes Kirim 1 Baris ke Sheet
+            </button>
+            <button class="btn btn-sm btn-outline" onclick="uploadAllStudentsToGAS()" title="Tulis otomatis seluruh 98 mahasiswa ke tab 'Mahasiswa' di spreadsheet Anda">
+              <i class="fas fa-cloud-arrow-up"></i> Isi 98 Mahasiswa ke Sheet
+            </button>
+            <button class="btn btn-sm btn-outline" id="btnFlushQueue" onclick="flushOfflineQueue()" title="Kirim semua presensi yang tadi tersimpan offline saat koneksi belum aktif">
+              <i class="fas fa-bolt"></i> Sinkronkan Presensi Tertunda
+            </button>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeModal('modalSettings')">Tutup</button>
+          <button class="btn btn-primary" onclick="saveSettings()">
+            <i class="fas fa-floppy-disk"></i> Simpan & Terapkan
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         MODAL 2: INPUT PRESENSI MANUAL
+         ============================================================ -->
+    <div class="modal-overlay" id="modalManual">
+      <div class="modal-container" style="max-width: 520px;">
+        <div class="modal-header">
+          <h3 class="modal-title">
+            <i class="fas fa-user-plus" style="color: var(--primary);"></i> Input Presensi Manual
+          </h3>
+          <button class="btn-close" onclick="closeModal('modalManual')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label" for="manualStudentSelect">Pilih dari Daftar Mahasiswa:</label>
+            <select id="manualStudentSelect" class="form-control">
+              <option value="">-- Memuat mahasiswa... --</option>
+            </select>
+          </div>
+
+          <div style="text-align: center; margin: 12px 0; color: var(--text-muted); font-size: 12px;">
+            &mdash; ATAU MASUKKAN NIM LANGSUNG &mdash;
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="manualCustomNim">Ketik NIM Mahasiswa:</label>
+            <input type="text" id="manualCustomNim" class="form-control" placeholder="Contoh: 2024001" />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeModal('modalManual')">Batal</button>
+          <button class="btn btn-primary" onclick="submitManualAttendance()">Tandai Hadir</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         MODAL 3: AMBIL KODE UNTUK VS CODE (EXPORTER & CODE VIEWER)
+         ============================================================ -->
+    <div class="modal-overlay" id="modalCodeExport">
+      <div class="modal-container">
+        <div class="modal-header">
+          <h3 class="modal-title">
+            <i class="fas fa-code" style="color: var(--primary);"></i> File Proyek untuk Visual Studio Code (VS Code)
+          </h3>
+          <button class="btn-close" onclick="closeModal('modalCodeExport')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+            Seluruh kode telah dipilah secara modular menjadi <strong>HTML, CSS, dan JavaScript</strong> murni (tanpa Node.js). Anda dapat menyalin kode setiap file atau mengunduh seluruh proyek dalam format <strong>.ZIP</strong>.
+          </p>
+
+          <!-- Tab Selector File -->
+          <div class="code-tab-nav">
+            <button class="code-tab-btn active" data-tab="html" onclick="switchCodeTab('html')">index.html</button>
+            <button class="code-tab-btn" data-tab="css" onclick="switchCodeTab('css')">style.css</button>
+            <button class="code-tab-btn" data-tab="js" onclick="switchCodeTab('js')">script.js</button>
+            <button class="code-tab-btn" data-tab="gas" onclick="switchCodeTab('gas')">google-apps-script.js</button>
+            <button class="code-tab-btn" data-tab="sql" onclick="switchCodeTab('sql')">database-schema.sql</button>
+          </div>
+
+          <!-- Code View Area -->
+          <pre class="code-snippet" id="codeViewerBlock">Memuat kode file...</pre>
+        </div>
+        <div class="modal-footer" style="justify-content: space-between;">
+          <button class="btn btn-outline" onclick="downloadProjectZip()">
+            <i class="fas fa-file-zipper"></i> Unduh Semua File (.ZIP)
+          </button>
+          <div style="display: flex; gap: 8px;">
+            <button class="btn btn-primary" onclick="copyCurrentCode()">
+              <i class="fas fa-copy"></i> Salin Kode File Ini
+            </button>
+            <button class="btn btn-outline" onclick="closeModal('modalCodeExport')">Tutup</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         MODAL 4: DIAGNOSTIK & PANDUAN SOLUSI JIKA GAGAL
+         ============================================================ -->
+    <div class="modal-overlay" id="modalDiagnostic">
+      <div class="modal-container">
+        <div class="modal-header">
+          <h3 class="modal-title">
+            <i class="fas fa-stethoscope" style="color: var(--primary);"></i> Diagnostik Sistem & Solusi Masalah
+          </h3>
+          <button class="btn-close" onclick="closeModal('modalDiagnostic')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 14px;">
+            Jika terjadi kendala saat pemindaian atau sinkronisasi, periksa status modul berikut:
+          </p>
+
+          <div class="diag-list">
+            <!-- Item 1: Browser & Local Storage -->
+            <div class="diag-item">
+              <div class="diag-icon" id="diagStorageIcon" style="color: var(--success);"><i class="fas fa-circle-check"></i></div>
+              <div>
+                <div class="diag-title">1. Memori Penyimpanan Browser (LocalStorage)</div>
+                <div class="diag-desc" id="diagStorageDesc">Aktif & Siap. Data kehadiran dan 90+ mahasiswa tersimpan aman secara offline.</div>
+              </div>
+            </div>
+
+            <!-- Item 2: Kamera & Izin -->
+            <div class="diag-item">
+              <div class="diag-icon" id="diagCameraIcon" style="color: var(--warning);"><i class="fas fa-circle-question"></i></div>
+              <div>
+                <div class="diag-title">2. Perangkat Kamera & Izin Iframe</div>
+                <div class="diag-desc" id="diagCameraDesc">
+                  Kamera memerlukan izin browser. Jika preview iframe memblokir kamera, klik tombol <strong>"Tab Baru"</strong> di kanan atas untuk membuka di halaman penuh, atau gunakan tombol <strong>"Scan dari Foto/File"</strong>.
+                </div>
+              </div>
+            </div>
+
+            <!-- Item 3: Google Apps Script & Google Sheets -->
+            <div class="diag-item">
+              <div class="diag-icon" id="diagServerIcon" style="color: var(--accent);"><i class="fas fa-network-wired"></i></div>
+              <div>
+                <div class="diag-title">3. Koneksi Google Apps Script (Spreadsheet / SQL)</div>
+                <div class="diag-desc" id="diagServerDesc">
+                  Mengecek endpoint API...
+                </div>
+              </div>
+            </div>
+
+            <!-- Item 4: Panduan Atasi Gagal -->
+            <div class="alert-box alert-warning" style="margin-top: 6px;">
+              <div>
+                <strong>Tips Mengatasi Status Gagal / Offline:</strong>
+                <ol style="margin-left: 18px; margin-top: 6px; font-size: 12px; line-height: 1.6;">
+                  <li><strong>Deploy Web App:</strong> Buka Google Sheets Anda > Ekstensi > Apps Script > Pasang <code>google-apps-script.js</code> > Deploy > Pilih <em>Who has access: Anyone</em> (Wajib).</li>
+                  <li><strong>Kamera Diblokir:</strong> Klik tombol <em>"Tab Baru"</em> di atas untuk menjalankan kamera di luar iframe.</li>
+                  <li><strong>Tanpa Kamera:</strong> Gunakan tombol <em>"Scan dari Foto/File"</em> atau <em>"Input Manual"</em> atau <em>"Uji Coba Presensi"</em>. Data tetap tersimpan 100% normal.</li>
+                </ol>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="runDiagnosticChecks()">
+            <i class="fas fa-rotate"></i> Uji Ulang Sekarang
+          </button>
+          <button class="btn btn-primary" onclick="closeModal('modalDiagnostic')">Tutup</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         MODAL 5: KONFIRMASI RESET SELURUH KEHADIRAN
+         ============================================================ -->
+    <div class="modal-overlay" id="modalResetAttendance">
+      <div class="modal-container" style="max-width: 460px;">
+        <div class="modal-header">
+          <h3 class="modal-title" style="color: #e11d48;">
+            <i class="fas fa-triangle-exclamation"></i> Reset Status Kehadiran
+          </h3>
+          <button class="btn-close" onclick="closeModal('modalResetAttendance')">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size: 14px; color: var(--text-main); margin-bottom: 12px;">
+            Apakah Anda yakin ingin <strong>mengosongkan status kehadiran seluruh mahasiswa</strong> agar kembali ke status <span class="badge badge-pending">Belum Hadir</span>?
+          </p>
+          <div class="alert-box alert-warning" style="margin-bottom: 8px;">
+            <i class="fas fa-circle-info"></i>
+            <span style="font-size: 12px;">
+              Tindakan ini hanya mereset catatan kehadiran sesi hari ini di layar dan memori lokal. Daftar 98 nama &amp; NIM mahasiswa tetap utuh 100%.
+            </span>
+          </div>
+        </div>
+        <div class="modal-footer" style="justify-content: flex-end; gap: 8px;">
+          <button class="btn btn-outline" onclick="closeModal('modalResetAttendance')">Batal</button>
+          <button class="btn btn-danger" onclick="confirmResetAllAttendance()">
+            <i class="fas fa-trash-can"></i> Ya, Reset Semua ke Belum Hadir
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- JavaScript Aplikasi Terpisah (Gunakan path relatif ./script.js agar berfungsi di GitHub Pages) -->
+    <script src="./script.js"></script>
+  </body>
+</html>
